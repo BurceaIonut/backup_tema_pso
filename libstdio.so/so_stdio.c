@@ -8,7 +8,7 @@
 #include <string.h>
 
 
-#define BUFFER_SIZE 4
+#define BUFFER_SIZE 4096
 
 typedef struct _so_file
 {
@@ -119,13 +119,13 @@ int so_fclose(SO_FILE *stream)
 
 int so_fgetc(SO_FILE *stream)
 {
-    if(stream->last_operation == 1 && stream->fflush == 0)
-    {
-        stream->error = 1;
-        return SO_EOF;
-    }
     if(stream->mode == 1 || stream->mode == 2 || stream->mode == 4 || stream->mode == 6)
     {
+        if(stream->last_operation == 1 && stream->fflush == 0)
+        {
+            stream->error = 1;
+            return SO_EOF;
+        }
         if(stream->index_buffer == 0 || stream->index_buffer == BUFFER_SIZE || stream->last_operation == 1)
         {
             stream->read_bytes = read(stream->fd, stream->buffer, BUFFER_SIZE);
@@ -137,7 +137,6 @@ int so_fgetc(SO_FILE *stream)
             else if(stream->read_bytes == 0)
             {
                 stream->isEOF = 1;
-                stream->error = 1;
                 return SO_EOF;
             }
             else if(stream->read_bytes > 0)
@@ -149,6 +148,12 @@ int so_fgetc(SO_FILE *stream)
         if(stream->from_fread == 0 && stream->buffer[stream->index_buffer] == '\0')
         {
             stream->isEOF = 1;
+            return SO_EOF;
+        }
+        if(stream->from_fread == 1 && stream->buffer[stream->index_buffer] == '\0')
+        {
+            stream->isEOF = 1;
+            stream->error = 1;
             return SO_EOF;
         }
         stream->last_operation = 2;
@@ -167,13 +172,17 @@ int so_fgetc(SO_FILE *stream)
 
 int so_fputc(int c, SO_FILE *stream)
 {
-    if(stream->last_operation == 2 && stream->fflush == 0)
-    {
-        stream->error = 1;
-        return SO_EOF;
-    }
     if(stream->mode == 2 || stream->mode == 3 || stream->mode == 4 || stream->mode == 5 ||stream->mode == 6)
     {
+        if(stream->mode == 5)
+        {
+            so_fseek(stream, 0, SEEK_END);
+        }
+        if(stream->last_operation == 2 && stream->fflush == 0)
+        {
+            stream->error = 1;
+            return SO_EOF;
+        }
         if(stream->index_buffer == BUFFER_SIZE)
         {
             stream->fflush = 0;
@@ -210,13 +219,14 @@ int so_fflush(SO_FILE* stream)
             stream->error = 1;
             return SO_EOF;
         }
+        stream->fflush = 1;
     }
     else if(stream->last_operation == 2 && stream->index_buffer != 0)
     {
         memset(stream->buffer, 0, BUFFER_SIZE);
         stream->index_buffer = 0;
+        stream->fflush = 1;
     }
-    stream->fflush = 1;
     return 0;
 }
 
@@ -271,5 +281,83 @@ int so_ferror(SO_FILE *stream)
         return SO_EOF;
     if(stream->error)
         return 1;
+    return 0;
+}
+
+size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
+{
+    long nr = size * nmemb;
+    char* buff = (char*)malloc(sizeof(char)*nr);
+    if(buff == NULL)
+    {
+        stream->error = 1;
+        return 0;
+    }
+    stream->from_fread = 1;
+    long count = 0;
+    for(long i = 0; i < nr; i++)
+    {
+        if(!stream->isEOF)
+        {
+            char x = so_fgetc(stream);
+            if(stream->error == 1)
+            {
+                free(buff);
+                stream->from_fread = 0;
+                return 0;
+            }
+            buff[i] = x;
+            count++;
+        }
+        else
+        {
+            stream->last_operation = 2;
+            memcpy(ptr, buff, nr);
+            free(buff);
+            stream->from_fread = 0;
+            return count;
+        }
+    }
+    stream->last_operation = 2;
+    memcpy(ptr, buff, nr);
+    free(buff);
+    stream->from_fread = 0;
+    return count;
+}
+
+size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
+{
+    long nr = size * nmemb;
+    char* buff = (char*)ptr;
+    long count = 0;
+    if(stream->mode == 6)
+    {
+        so_fseek(stream, 0, SEEK_END);
+    }
+    for(long i = 0; i < nmemb; i++)
+    {
+        char x = so_fputc(buff[i], stream);
+        if(stream->error == 1)
+        {
+            return 0;
+        }
+        count++;
+    }
+    stream->last_operation = 1;
+    if(count == 0)
+    {
+        stream->error = 1;
+        return 0;
+    }
+    return count;
+}
+
+SO_FILE *so_popen(const char *command, const char *type)
+{
+    return NULL;
+}
+
+int so_pclose(SO_FILE *stream)
+{
     return 0;
 }
