@@ -71,7 +71,6 @@ SO_FILE *so_fopen(const char *pathname, const char *mode)
     {
         handle->mode = 5;
         fd = open(pathname, O_WRONLY | O_APPEND | O_CREAT, 0600);
-        handle->cursor = lseek(fd, 0, SEEK_CUR);//aici nu imi intoarce pozitia buna
     }
     else if(strcmp(mode, "a+") == 0)
     {
@@ -99,21 +98,34 @@ SO_FILE *so_fopen(const char *pathname, const char *mode)
 
 int so_fclose(SO_FILE *stream)
 {
-    if(stream->last_operation == 1)
+    if(stream->last_operation == 1 && stream->fflush == 0)
     {
         stream->read_bytes = so_fflush(stream);
         if(stream->read_bytes < 0)
         {
             stream->error = 1;
+            free(stream);
+            stream = NULL;
             return SO_EOF;
         }
     }
     if(stream == NULL)
         return SO_EOF;
     if(close(stream->fd) < 0)
+    {
+        if(stream != NULL)
+        {
+            free(stream);
+            stream = NULL;
+        }
         return SO_EOF;
-    free(stream);
-    stream = NULL;
+    }
+    if(stream != NULL)
+    {
+        free(stream);
+        stream = NULL;
+    }
+    else return SO_EOF;
     return 0;
 }
 
@@ -280,7 +292,7 @@ int so_ferror(SO_FILE *stream)
     if(stream == NULL)
         return SO_EOF;
     if(stream->error)
-        return 1;
+        return SO_EOF;
     return 0;
 }
 
@@ -330,7 +342,7 @@ size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
     long nr = size * nmemb;
     char* buff = (char*)ptr;
     long count = 0;
-    if(stream->mode == 6)
+    if(stream->mode == 6 || stream->mode == 5)
     {
         so_fseek(stream, 0, SEEK_END);
     }
@@ -354,7 +366,80 @@ size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
 
 SO_FILE *so_popen(const char *command, const char *type)
 {
-    return NULL;
+    /*
+    int pipe_fd[2];
+    int fd;
+    if(pipe(pipe_fd) < 0)
+    {
+        return NULL;
+    }
+    int pid = fork();
+    if(pid < 0)
+    {
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        return NULL;
+    }
+    if(pid == 0)
+    {
+        if(strcmp(type, "r") == 0)
+        {
+            close(pipe_fd[0]);
+            dup2(pipe_fd[1], STDOUT_FILENO);
+            close(pipe_fd[1]);
+        }
+        else if(strcmp(type, "w") == 0)
+        {
+            close(pipe_fd[1]);
+            dup2(pipe_fd[1], STDOUT_FILENO);
+            close(pipe_fd[1]);
+        }
+        execlp("sh", "sh", "-c", command, NULL);
+        exit(1);
+    }
+    if(pid > 0)
+    {
+        if(strcmp(type, "r") == 0)
+        {
+            close(pipe_fd[1]);
+            fd = pipe_fd[0];
+        }
+        else
+        {
+            close(pipe_fd[0]);
+            fd = pipe_fd[1];
+        }
+    }
+    SO_FILE* f = (SO_FILE*)malloc(sizeof(SO_FILE));
+    if(!f)
+    {
+        free(f);
+        f = NULL;
+        return NULL;
+    }
+    f->fd = fd;
+    if(strcmp(type, "r") == 0)
+        f->mode = 1;
+    else if(strcmp(type, "w") == 0)
+        f->mode = 3;
+    else
+    {
+        free(f);
+        f = NULL;
+        return NULL;
+    }
+    f->last_operation = 0;
+    f->cursor = 0;
+    f->isEOF = 0;
+    f->index_buffer = 0;
+    f->error = 0;
+    f->child_pid = pid;
+    f->fflush = 0;
+    f->from_fread = 0;
+    memset(f->buffer, 0, BUFFER_SIZE); // IMI DA MEMCHECK DUPA CE AM IMPLEMENTAT so_popen
+    return f;
+    */
+   return NULL;
 }
 
 int so_pclose(SO_FILE *stream)
