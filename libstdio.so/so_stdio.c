@@ -176,7 +176,6 @@ int so_fgetc(SO_FILE *stream)
     }
     else
     {
-        stream->last_operation = 2;
         stream->error = 1;
         return SO_EOF;
     }
@@ -186,10 +185,6 @@ int so_fputc(int c, SO_FILE *stream)
 {
     if(stream->mode == 2 || stream->mode == 3 || stream->mode == 4 || stream->mode == 5 ||stream->mode == 6)
     {
-        if(stream->mode == 5)
-        {
-            so_fseek(stream, 0, SEEK_END);
-        }
         if(stream->last_operation == 2 && stream->fflush == 0)
         {
             stream->error = 1;
@@ -215,7 +210,6 @@ int so_fputc(int c, SO_FILE *stream)
     else
     {
         stream->error = 1;
-        stream->last_operation = 1;
         return SO_EOF;
     }
 }
@@ -331,6 +325,8 @@ size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
             return count;
         }
     }
+    if(stream->cursor == SEEK_END)
+        stream->isEOF = 1;
     stream->last_operation = 2;
     memcpy(ptr, buff, nr);
     free(buff);
