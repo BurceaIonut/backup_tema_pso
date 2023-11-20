@@ -222,7 +222,7 @@ int so_fputc(int c, SO_FILE *stream)
 
 int so_fflush(SO_FILE* stream)
 {
-    if(stream->last_operation == 1 && stream->index_buffer != 0)
+    if(stream->last_operation == 1 && stream->index_buffer != 0 && stream->fflush == 0)
     {
         stream->read_bytes = write(stream->fd, stream->buffer, stream->index_buffer);
         memset(stream->buffer, 0, BUFFER_SIZE);
@@ -232,14 +232,15 @@ int so_fflush(SO_FILE* stream)
             return SO_EOF;
         }
         stream->fflush = 1;
+        return 0;
     }
-    else if(stream->last_operation == 2 && stream->index_buffer != 0)
+    else
     {
         memset(stream->buffer, 0, BUFFER_SIZE);
         stream->index_buffer = 0;
         stream->fflush = 1;
+        return 0;
     }
-    return 0;
 }
 
 int so_fseek(SO_FILE *stream, long offset, int whence)
@@ -292,7 +293,7 @@ int so_ferror(SO_FILE *stream)
     if(stream == NULL)
         return SO_EOF;
     if(stream->error)
-        return SO_EOF;
+        return stream->error;
     return 0;
 }
 
