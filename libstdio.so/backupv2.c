@@ -153,12 +153,14 @@ int so_fgetc(SO_FILE *stream)
             stream->isEOF = 1;
             return SO_EOF;
         }
+        /*
         if(stream->from_fread == 1 && stream->buffer[stream->index_buffer] == '\0')
         {
             stream->isEOF = 1;
             stream->error = 1;
             return SO_EOF;
         }
+        */
         stream->last_operation = 2;
         stream->index_buffer++;
         stream->cursor++;
