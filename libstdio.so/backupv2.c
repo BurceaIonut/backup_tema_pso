@@ -164,7 +164,7 @@ int so_fgetc(SO_FILE *stream)
         stream->last_operation = 2;
         stream->index_buffer++;
         stream->cursor++;
-        stream->fflush = 0;
+        //stream->fflush = 0;
         return (int)(stream->buffer[stream->index_buffer - 1]);
     }
     else
@@ -215,12 +215,13 @@ int so_fflush(SO_FILE* stream)
     if(stream->last_operation == 1 && stream->index_buffer != 0 && stream->fflush == 0)
     {
         stream->read_bytes = write(stream->fd, stream->buffer, stream->index_buffer);
-        memset(stream->buffer, 0, BUFFER_SIZE);
+        //memset(stream->buffer, 0, BUFFER_SIZE);
         if(stream->read_bytes < 0)
         {
             stream->error = 1;
             return SO_EOF;
         }
+        stream->index_buffer = 0;
         stream->fflush = 1;
         return 0;
     }
@@ -242,7 +243,7 @@ int so_fseek(SO_FILE *stream, long offset, int whence)
     }
     if(so_fflush(stream) < 0)
     {
-        stream->error = 1;
+        //stream->error = 1;
         return SO_EOF;
     }
     int pos = lseek(stream->fd, 0, SEEK_CUR);
@@ -293,25 +294,25 @@ size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
     }
     stream->from_fread = 1;
     size_t count = 0;
-    for(size_t i = 0; i < nr; i++)
+    for(size_t i = 0; i < nmemb; i++)
     {
         if(!stream->isEOF)
         {
-            int x = so_fgetc(stream);
-            if(stream->error == 1 || stream->isEOF)
+            unsigned char x = so_fgetc(stream);
+            if(stream->error == 1 )//|| stream->isEOF)
             {
                 free(buff);
                 buff = NULL;
                 stream->from_fread = 0;
                 return 0;
             }
-            buff[i] = x;
+            buff[count] = x;
             count++;
         }
         else
         {
             stream->last_operation = 2;
-            memcpy(ptr, buff, count);
+            memcpy(ptr, buff, nr);
             free(buff);
             buff = NULL;
             stream->from_fread = 0;
@@ -321,7 +322,7 @@ size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
     //if(stream->cursor == SEEK_END)
     //    stream->isEOF = 1;
     stream->last_operation = 2;
-    memcpy(ptr, buff, count);
+    memcpy(ptr, buff, nr);
     free(buff);
     buff = NULL;
     stream->from_fread = 0;
@@ -333,6 +334,7 @@ size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
     size_t nr = size * nmemb;
     char* buff = (char*)ptr;
     size_t count = 0;
+    stream->fflush = 0;
     if(stream->mode == 6 || stream->mode == 5)
     {
         if(so_fseek(stream, 0, SEEK_END) < 0)
@@ -341,10 +343,10 @@ size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
             return 0;
         }
     }
-    for(size_t i = 0; i < nr; i++)
+    for(size_t i = 0; i < nmemb; i++)
     {
-        int x = so_fputc(buff[i], stream);
-        if(stream->error == 1 || stream->isEOF)
+        int x = so_fputc((int)buff[i], stream);
+        if(stream->error == 1)
         {
             return 0;
         }
@@ -361,74 +363,88 @@ size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
 
 SO_FILE *so_popen(const char *command, const char *type)
 {
-    int pipe_fd[2];
+    int pfd[2];
+	if(pipe(pfd) < 0) 
+    {
+		return NULL;
+	}
+
     int fd;
-    if(pipe(pipe_fd) < 0)
+	int pid = fork();
+
+    if(pid < 0) 
     {
-        return NULL;
-    }
-    int pid = fork();
-    if(pid < 0)
+		close(pfd[0]);
+		close(pfd[1]);
+		return NULL;
+	}
+	else if (pid == 0) 
     {
-        close(pipe_fd[0]);
-        close(pipe_fd[1]);
-        return NULL;
-    }
-    if(pid == 0)
-    {
-        if(strcmp(type, "r") == 0)
+		if(strcmp(type, "r") == 0) 
         {
-            close(pipe_fd[0]);
-            dup2(pipe_fd[1], STDOUT_FILENO);
-            close(pipe_fd[1]);
-        }
-        else if(strcmp(type, "w") == 0)
-        {
-            close(pipe_fd[1]);
-            dup2(pipe_fd[0], STDIN_FILENO);
-            close(pipe_fd[0]);
-        }
-        execlp("sh", "sh", "-c", command, NULL);
-        exit(1);
-    }
-    if(pid > 0)
+			close(pfd[0]);
+			dup2(pfd[1], STDOUT_FILENO);
+			close(pfd[1]);
+		}
+		else if(strcmp(type, "w") == 0)
+        { 
+			close(pfd[1]);
+			dup2(pfd[0], STDIN_FILENO);
+			close(pfd[0]);
+		}
+
+		execlp("/bin/sh", "sh", "-c", command, NULL);
+		exit(1);
+	}
+	else 
     {
-        if(strcmp(type, "r") == 0)
+		if(type[0] == 'r') 
         {
-            close(pipe_fd[1]);
-            fd = pipe_fd[0];
-        }
-        else if(strcmp(type, "w") == 0)
-        {
-            close(pipe_fd[0]);
-            fd = pipe_fd[1];
-        }
-    }
-    SO_FILE *handle = (SO_FILE*)malloc(sizeof(SO_FILE));
-    if(handle == NULL)
+			close(pfd[1]);
+			fd = pfd[0];
+		}
+		else 
+        { 
+			close(pfd[0]);
+			fd = pfd[1];
+		}
+	}
+
+	SO_FILE* handle = (SO_FILE*)malloc(sizeof(SO_FILE));
+	if(handle == NULL) 
     {
-        return NULL;
-    }
-    handle->fd = fd;
-    if(strcmp(type, "r") == 0)
+        free(handle);
+        handle = NULL;
+		return NULL;
+	}
+
+	handle->fd = fd;
+
+	if(strcmp(type, "r") == 0)
+    {
         handle->mode = 1;
+	}
     else if(strcmp(type, "w") == 0)
+    {
         handle->mode = 3;
+    }
     else
     {
         free(handle);
         handle = NULL;
         return NULL;
     }
-    handle->last_operation = 0;
-    handle->cursor = 0;
-    handle->isEOF = 0;
-    handle->index_buffer = 0;
-    handle->error = 0;
-    handle->child_pid = pid;
-    handle->fflush = 0;
-    handle->from_fread = 0;
-    return handle;
+
+	handle->last_operation=0;
+	handle->cursor = 0;
+	handle->isEOF = 0;
+	handle->index_buffer = 0;
+	handle->error = 0;
+	handle->child_pid = pid;
+    handle->fflush=0;
+    handle->from_fread=0;
+    memset(handle->buffer, 0, BUFFER_SIZE);
+	return handle;
 }
 
 int so_pclose(SO_FILE *stream)
