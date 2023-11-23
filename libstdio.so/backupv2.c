@@ -163,6 +163,8 @@ int so_fgetc(SO_FILE *stream)
         */
         stream->last_operation = 2;
         stream->index_buffer++;
+        //if(stream->buffer[stream->index_buffer] == '\0' && stream->read_bytes < BUFFER_SIZE)//
+        //    stream->isEOF = 1;
         stream->cursor++;
         //stream->fflush = 0;
         return (int)(stream->buffer[stream->index_buffer - 1]);
@@ -238,7 +240,7 @@ int so_fseek(SO_FILE *stream, long offset, int whence)
 {
     if(stream == NULL)
     {
-        stream->error = 1;
+        //stream->error = 1;
         return SO_EOF;
     }
     if(so_fflush(stream) < 0)
@@ -283,50 +285,55 @@ int so_ferror(SO_FILE *stream)
     return stream->error;
 }
 
-size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
-{
-    size_t nr = size * nmemb;
-    char* buff = (char*)malloc(sizeof(char)*nr);
-    if(buff == NULL)
-    {
+size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream) {
+  char *data = (char*)ptr;
+  size_t total = size * nmemb;
+  size_t count = total;
+
+  if (!stream || !ptr || size == 0 || nmemb == 0) {
+    return 0;
+  }
+
+  while (count != 0) {
+    if (stream->index_buffer > 0 &&
+        stream->cursor < stream->index_buffer) {
+      size_t nbytes = (count < (size_t)(stream->index_buffer - stream->cursor)) ? count : (size_t)(stream->index_buffer - stream->cursor);
+      memcpy(data, stream->buffer + stream->cursor, nbytes);
+
+      count -= nbytes;
+      stream->cursor += nbytes;
+      data += nbytes;
+    } else if (count >= BUFFER_SIZE) {
+      size_t nbytes = BUFFER_SIZE;
+      ssize_t nread = read(stream->fd, data, nbytes);
+
+      if (nread == 0) {
+        stream->isEOF = 1;
+        return (total - count) / size;
+      } else if (nread < 0) {
         stream->error = 1;
-        return 0;
+        return (total - count) / size;
+      }
+
+      count -= nread;
+      data += nread;
+    } else {
+      ssize_t nread = read(stream->fd, stream->buffer, BUFFER_SIZE);
+
+      if (nread == 0) {
+        stream->isEOF = 1;
+        return (total - count) / size;
+      } else if (nread < 0) {
+        stream->error = 1;
+        return (total - count) / size;
+      }
+
+      stream->index_buffer = nread;
+      stream->cursor = 0;
     }
-    stream->from_fread = 1;
-    size_t count = 0;
-    for(size_t i = 0; i < nmemb; i++)
-    {
-        if(!stream->isEOF)
-        {
-            unsigned char x = so_fgetc(stream);
-            if(stream->error == 1 )//|| stream->isEOF)
-            {
-                free(buff);
-                buff = NULL;
-                stream->from_fread = 0;
-                return 0;
-            }
-            buff[count] = x;
-            count++;
-        }
-        else
-        {
-            stream->last_operation = 2;
-            memcpy(ptr, buff, nr);
-            free(buff);
-            buff = NULL;
-            stream->from_fread = 0;
-            return count;
-        }
-    }
-    //if(stream->cursor == SEEK_END)
-    //    stream->isEOF = 1;
-    stream->last_operation = 2;
-    memcpy(ptr, buff, nr);
-    free(buff);
-    buff = NULL;
-    stream->from_fread = 0;
-    return count;
+  }
+
+  return nmemb;
 }
 
 size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
@@ -371,80 +378,80 @@ SO_FILE *so_popen(const char *command, const char *type)
 
     int fd;
 	int pid = fork();
-
     if(pid < 0) 
     {
 		close(pfd[0]);
 		close(pfd[1]);
 		return NULL;
 	}
-	else if (pid == 0) 
+	if (pid == 0) 
     {
-		if(strcmp(type, "r") == 0) 
+		if(type[0] == 'r') 
         {
 			close(pfd[0]);
 			dup2(pfd[1], STDOUT_FILENO);
 			close(pfd[1]);
 		}
-		else if(strcmp(type, "w") == 0)
+		else if(type[0] == 'w')
         { 
 			close(pfd[1]);
 			dup2(pfd[0], STDIN_FILENO);
 			close(pfd[0]);
 		}
-
-		execlp("/bin/sh", "sh", "-c", command, NULL);
-		exit(1);
+		execl("/bin/sh", "sh", "-c", command, NULL);
+		exit(0);
 	}
-	else 
+    if(pid > 0)
     {
-		if(type[0] == 'r') 
+        SO_FILE* handle = (SO_FILE*)malloc(sizeof(SO_FILE));
+        if(handle == NULL) 
         {
-			close(pfd[1]);
-			fd = pfd[0];
-		}
-		else 
+            //close(fd);
+            close(pfd[0]);
+            close(pfd[1]);
+            return NULL;
+        }
+
+        if(type[0] == 'r') 
+        {
+            close(pfd[1]);
+            fd = pfd[0];
+        }
+        else 
         { 
-			close(pfd[0]);
-			fd = pfd[1];
-		}
-	}
+            close(pfd[0]);
+            fd = pfd[1];
+        }
 
-	SO_FILE* handle = (SO_FILE*)malloc(sizeof(SO_FILE));
-	if(handle == NULL) 
-    {
-        free(handle);
-        handle = NULL;
-		return NULL;
-	}
+        handle->fd = fd;
 
-	handle->fd = fd;
+        if(type[0] == 'r')
+        {
+            handle->mode = 1;
+        }
+        else if(type[0] == 'w')
+        {
+            handle->mode = 3;
+        }
+        else
+        {
+            close(fd);
+            free(handle);
+            handle = NULL;
+            return NULL;
+        }
 
-	if(strcmp(type, "r") == 0)
-    {
-        handle->mode = 1;
-	}
-    else if(strcmp(type, "w") == 0)
-    {
-        handle->mode = 3;
+        handle->last_operation=0;
+        handle->cursor = 0;
+        handle->isEOF = 0;
+        handle->index_buffer = 0;
+        handle->error = 0;
+        handle->child_pid = pid;
+        handle->fflush=0;
+        handle->from_fread=0;
+        //memset(handle->buffer, 0, BUFFER_SIZE);
+        return handle;
     }
-    else
-    {
-        free(handle);
-        handle = NULL;
-        return NULL;
-    }
-
-	handle->last_operation=0;
-	handle->cursor = 0;
-	handle->isEOF = 0;
-	handle->index_buffer = 0;
-	handle->error = 0;
-	handle->child_pid = pid;
-    handle->fflush=0;
-    handle->from_fread=0;
-    memset(handle->buffer, 0, BUFFER_SIZE);
-	return handle;
 }
 
 int so_pclose(SO_FILE *stream)
@@ -453,23 +460,19 @@ int so_pclose(SO_FILE *stream)
     {
         return SO_EOF;
     }
-    if(stream->child_pid < 0)
-    {
-        return SO_EOF;
-    }
-    if(so_fclose(stream) < 0)
-    {
-        return SO_EOF;
-    }
     int wstatus;
-    int ret = waitpid(stream->child_pid, &wstatus, 0);
+    int ret = waitpid(stream->child_pid, &wstatus, 0);//aici se blocheaza la so_popen write
     if(ret < 0)
     {
         free(stream);
         stream = NULL;
-        return ret;
+        return SO_EOF;
     }
-    free(stream);
-    stream = NULL;
+    else if(so_fclose(stream) < 0)
+    {
+        return SO_EOF;
+    }
+    //free(stream);
+    //stream = NULL;
     return wstatus;
 }
